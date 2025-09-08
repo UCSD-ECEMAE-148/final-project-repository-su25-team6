@@ -1,0 +1,160 @@
+# behavior_node.py
+# Core behavior/state machine. Subscribes to:
+#  - /cone/detected (Bool)
+#  - /cone/angle_deg (Float32)
+#  - /cone/area (Float32)
+#  - /stop_line/detected (Bool)
+#  - /lidar/front_min (Float32)
+# Publishes velocity commands to /cmd_vel (geometry_msgs/Twist)
+# States: DRIVE, TURN_TO_CONE, APPROACH_PARK, STOPPED
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Bool, Float32
+from geometry_msgs.msg import Twist
+import math
+import time
+
+class BehaviorNode(Node):
+    def __init__(self):
+        super().__init__('behavior_node')
+        # declare and get parameters from YAML
+        self.declare_parameter('forward_speed', 0.5)
+        self.declare_parameter('turn_speed', 0.35)
+        self.declare_parameter('cone_angle_threshold', 8.0)
+        self.declare_parameter('parking_area_threshold', 5000.0)
+        self.declare_parameter('stop_distance', 0.35)
+
+        self.forward_speed = self.get_parameter('forward_speed').value
+        self.turn_speed = self.get_parameter('turn_speed').value
+        self.cone_angle_threshold = self.get_parameter('cone_angle_threshold').value
+        self.parking_area_threshold = self.get_parameter('parking_area_threshold').value
+        self.stop_distance = self.get_parameter('stop_distance').value
+
+        # subs
+        self.sub_cone_detect = self.create_subscription(Bool, '/cone/detected', self.cb_cone_detected, 10)
+        self.sub_cone_angle = self.create_subscription(Float32, '/cone/angle_deg', self.cb_cone_angle, 10)
+        self.sub_cone_area = self.create_subscription(Float32, '/cone/area', self.cb_cone_area, 10)
+        self.sub_stop = self.create_subscription(Bool, '/stop_line/detected', self.cb_stop, 10)
+        self.sub_lidar = self.create_subscription(Float32, '/lidar/front_min', self.cb_lidar, 10)
+        # publisher
+        self.pub_cmd = self.create_publisher(Twist, '/cmd_vel', 10)
+        # state
+        self.state = 'DRIVE'  # DRIVE -> TURN_TO_CONE -> APPROACH_PARK -> STOPPED
+        self.cone_detected = False
+        self.cone_angle = 0.0
+        self.cone_area = 0.0
+        self.stop_detected = False
+        self.front_dist = float('inf')
+        # --- Timer for state machine ---
+        self.timer = self.create_timer(0.1, self.run_state)
+
+        self.get_logger().info(
+            f'BehaviorNode started — initial state DRIVE | '
+            f'forward_speed={self.forward_speed}, turn_speed={self.turn_speed}, '
+            f'cone_angle_threshold={self.cone_angle_threshold}, '
+            f'parking_area_threshold={self.parking_area_threshold}, '
+            f'stop_distance={self.stop_distance}'
+        )
+    # callbacks
+    def cb_cone_detected(self, msg: Bool):
+        self.cone_detected = bool(msg.data)
+    def cb_cone_angle(self, msg: Float32):
+        self.cone_angle = float(msg.data)
+    def cb_cone_area(self, msg: Float32):
+        self.cone_area = float(msg.data)
+    def cb_stop(self, msg: Bool):
+        self.stop_detected = bool(msg.data)
+    def cb_lidar(self, msg: Float32):
+        self.front_dist = float(msg.data)
+
+    def publish_cmd(self, linear, angular):
+        t = Twist()
+        t.linear.x = linear
+        t.angular.z = angular
+        self.pub_cmd.publish(t)
+
+    def run_state(self):
+        # simple state machine
+        if self.state == 'DRIVE':
+            # always drive straight unless cone spotted
+            if self.cone_detected:
+                self.state = 'TURN_TO_CONE'
+                self.get_logger().info('Cone detected -> switching to TURN_TO_CONE')
+            else:
+                # drive straight slowly, but slow if obstacle close
+                speed = self.forward_speed if self.front_dist > self.stop_distance else 0.1
+                self.publish_cmd(speed, 0.0)
+
+        elif self.state == 'TURN_TO_CONE':
+            # aim toward cone by turning in place or turning while moving slowly
+            # if cone lost, back to DRIVE
+            if not self.cone_detected:
+                self.get_logger().info('Cone lost -> back to DRIVE')
+                self.state = 'DRIVE'
+                return
+            angle = self.cone_angle
+            # if angle small -> proceed forward to park
+            if abs(angle) < self.cone_angle_threshold:
+                self.state = 'APPROACH_PARK'
+                self.get_logger().info('Aligned with cone -> switching to APPROACH_PARK')
+                return
+            # turn towards cone
+            turn_dir = -1.0 if angle < 0 else 1.0  # negative angle -> left (camera coordinate)
+            self.publish_cmd(0.05, turn_dir * self.turn_speed)
+
+        elif self.state == 'APPROACH_PARK':
+            # drive forward toward cone while keeping small steering correction
+            if self.stop_detected:
+                self.get_logger().info('Stop line detected -> STOPPED')
+                self.state = 'STOPPED'
+                self.publish_cmd(0.0, 0.0)
+                return
+            if not self.cone_detected:
+                # lost cone while approaching -> go back to DRIVE
+                self.get_logger().info('Cone lost during approach -> DRIVE')
+                self.state = 'DRIVE'
+                return
+
+            # if very close to cone (area large) stop (we treat this as parked) or wait for stop line
+            if self.cone_area >= self.parking_area_threshold:
+                self.get_logger().info('Close to cone (area threshold) - parked/holding')
+                self.publish_cmd(0.0, 0.0)
+                return
+            # small steering correction from cone_angle
+            steer = (self.cone_angle / 30.0)  # normalize roughly to [-1,1]
+            steer = max(min(steer, 1.0), -1.0)
+            # if obstacle in front too close, stop briefly
+            if self.front_dist < self.stop_distance:
+                self.publish_cmd(0.0, 0.0)
+            else:
+                self.publish_cmd(self.forward_speed * 0.6, -steer * 0.6)
+
+        elif self.state == 'STOPPED':
+            # stay stopped; optionally clear state if stop line disappears
+            self.publish_cmd(0.0, 0.0)
+            if not self.stop_detected:
+                self.get_logger().info('Stop line gone -> DRIVE')
+                self.state = 'DRIVE'
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = BehaviorNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
+
+
+
+
+
+
+
+
+
