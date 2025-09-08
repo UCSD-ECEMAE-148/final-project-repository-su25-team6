@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+# cone_detection_node.py
+# Subscribes to camera images, detects orange cones, publishes:
+#  - /cone/detected (std_msgs/Bool)
+#  - /cone/angle_deg (std_msgs/Float32) -> angle (degrees) relative to image center (+ right)
+#  - /cone/area (std_msgs/Float32) -> contour area (useful for distance approx)
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from std_msgs.msg import Bool, Float32
+from cv_bridge import CvBridge
+import cv2
+import numpy as np
+
+class ConeDetectionNode(Node):
+    def __init__(self):
+        super().__init__('cone_detection_node')
+        self.bridge = CvBridge()
+        self.image_sub = self.create_subscription(Image, '/camera/image_raw', self.image_cb, 1)
+        self.pub_detected = self.create_publisher(Bool, '/cone/detected', 1)
+        self.pub_angle = self.create_publisher(Float32, '/cone/angle_deg', 1)
+        self.pub_area = self.create_publisher(Float32, '/cone/area', 1)
+
+        # declare parameters
+        self.declare_parameter('Hue_low', 18)
+        self.declare_parameter('Hue_high', 50)
+        self.declare_parameter('Saturation_low', 75)
+        self.declare_parameter('Saturation_high', 255)
+        self.declare_parameter('Value_low', 145)
+        self.declare_parameter('Value_high', 255)
+
+        # read from ROS 2 parameters (YAML)
+        hue_low = self.get_parameter('Hue_low').value
+        hue_high = self.get_parameter('Hue_high').value
+        sat_low = self.get_parameter('Saturation_low').value
+        sat_high = self.get_parameter('Saturation_high').value
+        val_low = self.get_parameter('Value_low').value
+        val_high = self.get_parameter('Value_high').value
+
+        self.hsv_lower = np.array([hue_low, sat_low, val_low])
+        self.hsv_upper = np.array([hue_high, sat_high, val_high])
+        self.get_logger().info(f'ConeDetectionNode started with HSV {self.hsv_lower}-{self.hsv_upper}')
+
+    def image_cb(self, msg: Image):
+        try:
+            cv_img = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        except Exception as e:
+            self.get_logger().error(f'cv_bridge error: {e}')
+            return
+
+        h, w = cv_img.shape[:2]
+        hsv = cv2.cvtColor(cv_img, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, self.hsv_lower, self.hsv_upper)
+        # morphological clean-up
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7,7))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            self.pub_detected.publish(Bool(data=False))
+            # also publish zeroed metrics
+            self.pub_angle.publish(Float32(data=0.0))
+            self.pub_area.publish(Float32(data=0.0))
+            return
+
+        # pick largest contour (likely the cone)
+        largest = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(largest)
+        if area < 200:  # filter tiny noise — tune threshold
+            self.pub_detected.publish(Bool(data=False))
+            self.pub_angle.publish(Float32(data=0.0))
+            self.pub_area.publish(Float32(data=0.0))
+            return
+
+        # compute centroid
+        M = cv2.moments(largest)
+        if M['m00'] == 0:
+            cx = 0
+        else:
+            cx = int(M['m10'] / M['m00'])
+        # angle approximation: pixel offset -> degrees
+        # assume horizontal FOV for camera in degrees (tune for your camera)
+        camera_hfov_deg = 70.0
+        offset = (cx - w/2) / (w/2)  # -1 (left) .. +1 (right)
+        angle_deg = offset * (camera_hfov_deg / 2.0)
+
+        self.pub_detected.publish(Bool(data=True))
+        self.pub_angle.publish(Float32(data=float(angle_deg)))
+        self.pub_area.publish(Float32(data=float(area)))
+
+        # Optional: debug image window (only if running with display available)
+        # draw box & centroid
+        # x,y,w_box,h_box = cv2.boundingRect(largest)
+        # cv2.rectangle(cv_img, (x,y), (x+w_box, y+h_box), (0,255,0), 2)
+        # cv2.circle(cv_img, (cx, int(h/2)), 5, (255,0,0), -1)
+        # cv2.imshow('cone', cv_img); cv2.waitKey(1)
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = ConeDetectionNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
+
+
+
+
