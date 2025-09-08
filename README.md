@@ -1,5 +1,6 @@
 # ECE/MAE 148 Final Project
-## Team 6 – Spring 2025
+# Autonomous Parking
+## Team 6 – Summer Session 2 2025
 
 ### Team Members
 - Jordan Taylor - Electrical and Computer Engineering
