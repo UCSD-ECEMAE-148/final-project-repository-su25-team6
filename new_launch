@@ -1,0 +1,68 @@
+from launch import LaunchDescription
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    return LaunchDescription([
+        # Behavior Node
+        Node(
+            package='ucsd_robocar_nav2_pkg',
+            executable='behavior_node',
+            name='behavior_node',
+            output='screen',
+            parameters=[{
+                'forward_speed': 0.5,
+                'turn_speed': 0.35,
+                'cone_angle_threshold': 8.0,
+                'parking_area_threshold': 5000.0,
+                'stop_distance': 0.35,
+            }],
+            remappings=[
+                ('/camera/image_raw', '/camera/color/image_raw')
+            ]
+        ),
+
+        # Cone Detection Node
+        Node(
+            package='ucsd_robocar_nav2_pkg',
+            executable='cone_detection_node',
+            name='cone_detection_node',
+            output='screen',
+            parameters=[{
+                'Hue_low': 18,
+                'Hue_high': 50,
+                'Saturation_low': 75,
+                'Saturation_high': 255,
+                'Value_low': 145,
+                'Value_high': 255,
+            }],
+            remappings=[
+                ('/camera/image_raw', '/camera/color/image_raw')
+            ]
+        ),
+
+        # Stop Line Detector Node
+        Node(
+            package='ucsd_robocar_nav2_pkg',
+            executable='stop_line_detector',
+            name='stop_line_detector',
+            output='screen',
+            remappings=[
+                ('/camera/image_raw', '/camera/color/image_raw')
+            ]
+        ),
+
+        # LiDAR Processor Node
+        Node(
+            package='ucsd_robocar_nav2_pkg',
+            executable='lidar_processor_node',
+            name='lidar_processor',
+            output='screen',
+            parameters=[{'frontal_window_deg': 30}],
+            # Only remap if your LiDAR topic is not /scan
+            remappings=[
+                # ('/scan', '/ld06/scan')  # uncomment and edit if needed
+            ]
+        ),
+    ])
+
+
