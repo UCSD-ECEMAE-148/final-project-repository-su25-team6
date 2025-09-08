@@ -2,10 +2,10 @@
 ## Team 6 – Spring 2025
 
 ### Team Members
-Jordan Taylor - Electrical and Computer Engineering
-Elisha Sengupta - Electrical and Computer Engineering
-Keanu Santos-Frost - Computer Science and Engineering
-Justin Gamm - Cognitive Science
+- Jordan Taylor - Electrical and Computer Engineering
+- Elisha Sengupta - Electrical and Computer Engineering
+- Keanu Santos-Frost - Computer Science and Engineering
+- Justin Gamm - Cognitive Science
 
 ### Abstract
 Our project focused on building an autonomous navigation stack for the UCSD Robocar using ROS2. The car was equipped with an LD06 LiDAR, an OAK-D camera, and a VESC motor controller. We implemented a modular navigation pipeline where sensor data is processed through dedicated nodes (cone detection, stop line detection, and LiDAR processing) and then fused in a high-level behavior node to control the car’s movements.
