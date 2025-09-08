@@ -39,15 +39,17 @@ Behavior node combining inputs to control the car through the VESC
   - stop_line_detector.py
   - behavior_node.py
 
-### System Architecture
+### Directory Structure
+```text
 ucsd_robocar_nav2_pkg/
 ├── launch/
-│ └── all_components.launch.py # Main launch file that starts all nodes
+│   └── all_components.launch.py       # Main launch file that starts all nodes
 ├── config/
-│ ├── car_config.yaml # Enable/disable sensors and nodes
-│ └── pkg_locations_ucsd.yaml # Maps packages to launch files, topics
-├── setup.py # Python package setup
-├── cone_detection_node.py # Cone detection using OAK-D
-├── lidar_processor_node.py # LiDAR data processing
-├── behavior_node.py # High-level behavior logic
-├── stop_line_detector.py # Stop line detection
+│   ├── car_config.yaml                # Enable/disable sensors and nodes
+│   └── pkg_locations_ucsd.yaml        # Maps packages to launch files, topics
+├── setup.py                           # Python package setup
+├── cone_detection_node.py             # Cone detection using OAK-D
+├── lidar_processor_node.py            # LiDAR data processing
+├── behavior_node.py                   # High-level behavior logic
+├── stop_line_detector.py              # Stop line detection
+
